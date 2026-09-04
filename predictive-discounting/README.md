@@ -23,7 +23,7 @@ No Docker is required.
 Create a database named `predictive_discounting`, then set `backend/.env`:
 
 ```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/predictive_discounting
+DATABASE_URL=postgresql://postgres:yourpassword@localhost:5432/DB_name
 FRONTEND_URL=http://localhost:5173
 EXCEL_FILE_PATH=excel/store_inventory.xlsx
 ```
