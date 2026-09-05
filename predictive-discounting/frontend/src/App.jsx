@@ -1,105 +1,35 @@
-import { useEffect, useState } from "react"
-
-const STORE_ID = "STORE-1"
-
-function tierFor(risk) {
-  if (risk >= 0.6) return { label: "HIGH RISK", className: "tier-high" }
-  if (risk >= 0.35) return { label: "MEDIUM RISK", className: "tier-medium" }
-  return { label: "LOW RISK", className: "tier-low" }
-}
-
-export default function App() {
-  const [recommendations, setRecommendations] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
-  const [message, setMessage] = useState("")
-
-  async function loadRecommendations() {
-    setLoading(true); setError("")
-    try {
-      const res = await fetch(`/api/recommendations?store_id=${STORE_ID}`)
-      if (!res.ok) throw new Error("Failed to load recommendations")
-      setRecommendations(await res.json())
-    } catch (e) { setError(e.message) }
-    finally { setLoading(false) }
-  }
-
-  async function approve(r, discount) {
-    setMessage("")
-    try {
-      // Recommendations are persisted before approval in the backend below.
-      // For the MVP, create a recommendation row first if the API returns a live recommendation.
-      const save = await fetch(`/api/recommendations?store_id=${STORE_ID}`)
-      if (!save.ok) throw new Error("Could not refresh recommendation")
-      const latest = await save.json()
-      const current = latest.find(x => x.product_id === r.product_id)
-      if (!current?.id) throw new Error("Recommendation is not persisted yet")
-      const res = await fetch("/api/apply-discount", {
-        method: "POST", headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({ recommendation_id: current.id, discount_percentage: discount, decided_by: "manager" })
-      })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        throw new Error(body.detail || "Could not apply discount")
-      }
-      const data = await res.json()
-      setMessage(`${r.product_name}: ${discount}% approved → ₹${Number(data.new_price).toFixed(2)}. Excel updated automatically.`)
-      loadRecommendations()
-    } catch (e) { setError(e.message) }
-  }
-
-  useEffect(() => { loadRecommendations() }, [])
-
-  const atRiskCount = recommendations.filter(r => r.risk_score >= 0.35).length
-
-  return (
-    <main className="dashboard">
-      <header className="dashboard-header">
-        <div>
-          <p className="eyebrow">PRICEPULSE • SUPERMARKET INTELLIGENCE</p>
-          <h1>Predictive Discounting</h1>
-          <p className="subtitle">Manager console · {STORE_ID}</p>
-        </div>
-        <button className="refresh" onClick={loadRecommendations} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
-      </header>
-
-      {message && <div className="message success-message">{message}</div>}
-      {error && <div className="message error-message">{error}</div>}
-
-      <section className="stats-row">
-        <div className="stat-card"><span>Products at risk</span><strong>{atRiskCount}</strong><small>Needs manager attention</small></div>
-        <div className="stat-card"><span>Recommendations</span><strong>{recommendations.length}</strong><small>Live AI pipeline results</small></div>
-        <div className="stat-card"><span>Discount guardrail</span><strong>10–20%</strong><small>Manager-approved range</small></div>
-      </section>
-
-      <section className="section-heading">
-        <div><p className="eyebrow">AI ACTION QUEUE</p><h2>Unsold-risk recommendations</h2></div>
-      </section>
-
-      {loading ? <div className="empty-state">Loading predictions…</div> :
-        recommendations.length === 0 ? <div className="empty-state">No inventory data found. Run the seed script.</div> :
-        <div className="product-list">
-          {recommendations.map(r => {
-            const tier = tierFor(r.risk_score)
-            const expired = r.days_to_expiry <= 0
-            const options = [10,15,20].filter(d => d >= r.recommended_min_discount && d <= r.recommended_max_discount)
-            return <article className="product-row" key={r.product_id}>
-              <div className="product-info">
-                <div className="name-line"><h3>{r.product_name}</h3><span className={`tier-badge ${tier.className}`}>{tier.label}</span></div>
-                <p className="product-meta">{r.sku} · {r.category || "General"} · {r.stock_quantity} units in stock</p>
-              </div>
-              <div className="metric"><span>Demand forecast</span><b>{r.predicted_demand} units</b></div>
-              <div className="metric"><span>Expiry</span><b>{expired ? "Expired" : `${r.days_to_expiry} days`}</b></div>
-              <div className="price-block"><span>MRP</span><del>₹{Number(r.mrp).toFixed(2)}</del><b>₹{Number(r.current_price).toFixed(2)}</b></div>
-              {!expired && r.risk_score >= 0.35 && <div className="approval">
-                <span>Recommended: {r.recommended_min_discount}%–{r.recommended_max_discount}%</span>
-                <div className="discount-options">{options.map(d => <button key={d} onClick={() => approve(r,d)}>{d}%</button>)}</div>
-                <small>Select a discount to approve and synchronize the store price.</small>
-              </div>}
-            </article>
-          })}
-        </div>
-      }
-    </main>
-  )
-}
+import {useEffect,useState} from 'react'
+import {HashRouter,Routes,Route,NavLink} from 'react-router-dom'
+import './App.css'
+import {login,getStores,createStore,getProducts,getRecommendations,applyDiscount,scanBarcode,getSummary,getFinance,createProduct,deleteProduct} from './api/client'
+const money=v=>`₹${Number(v||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}`
+function Login({onLogin}){const[u,setU]=useState('manager'),[p,setP]=useState('manager123'),[err,setErr]=useState(''),[busy,setBusy]=useState(false);const submit=async e=>{e.preventDefault();setBusy(true);setErr('');try{onLogin(await login(u,p))}catch(x){setErr(x.response?.data?.detail||'Unable to sign in')}finally{setBusy(false)}};return <div className="login-shell"><div className="login-panel"><div className="brand-mark">
+  <img src="/pricepulse-logo.png" alt="PricePulse Logo" />
+</div><div className="eyebrow">PRICEPULSE</div><h1>Demand product. Optimize Price. Maximize Value.</h1><p className="login-copy">Predict demand, reduce unsold inventory and protect margin with manager-controlled discounts.</p><form onSubmit={submit} className="login-form"><label>Username<input value={u} onChange={e=>setU(e.target.value)} required/></label><label>Password<input type="password" value={p} onChange={e=>setP(e.target.value)} required/></label>{err&&<div className="alert error">{err}</div>}<button className="btn primary full" disabled={busy}>{busy?'Signing in…':'Sign in'}</button></form><div className="demo-hint"><b>Demo access</b><br/>Manager: manager / manager123<br/>Finance: finance / finance123</div></div></div>}
+function Layout({session,onLogout}){return <div className="app-shell"><aside className="sidebar"><div className="brand">
+  <img
+    src="/pricepulse-logo.png"
+    alt="PricePulse Logo"
+    className="sidebar-logo"
+  />
+  <span>
+    <b>PricePulse</b>
+    <small>Demand product. Optimize Price. Maximize Value.</small>
+  </span>
+</div><div className="role-chip">{session.role==='finance'?'FINANCE & OPERATIONS':'STORE MANAGER'}</div><nav><NavLink end to="/">Overview</NavLink>{session.role==='manager'&&<><NavLink to="/manager">Manager Queue</NavLink><NavLink to="/inventory">Inventory</NavLink><NavLink to="/billing">Billing</NavLink></>}{session.role==='finance'&&<><NavLink to="/stores">Store Management</NavLink><NavLink to="/finance">Financial Analytics</NavLink></>}</nav><div className="sidebar-bottom"><div className="user-mini"><div className="avatar">{session.username[0].toUpperCase()}</div><div><b>{session.display_name}</b><small>@{session.username}</small></div></div><button className="logout" onClick={onLogout}>Sign out</button></div></aside><main className="main"><header className="topbar"><div><span className="live-dot"/> Live operations</div><div className="top-store">{session.store_id||'All stores'}</div></header><Routes><Route path="/" element={<Overview session={session}/>}/><Route path="/manager" element={<ManagerQueue session={session}/>}/><Route path="/inventory" element={<Inventory session={session}/>}/><Route path="/billing" element={<Billing session={session}/>}/><Route path="/stores" element={<Stores/>}/><Route path="/finance" element={<Finance/>}/></Routes></main></div>}
+function PageHeader({eyebrow,title,sub,action}){return <div className="page-header"><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1><p>{sub}</p></div>{action}</div>}
+function Overview({session}){if(session.role==='finance')return <Finance/>;const[s,setS]=useState(null),[recs,setRecs]=useState([]),store=session.store_id||'STORE-1';useEffect(()=>{Promise.all([getSummary(store),getRecommendations(store)]).then(([a,b])=>{setS(a);setRecs(b)})},[]);return <><PageHeader eyebrow="OPERATIONS OVERVIEW" title="Greetings from Price Pulse." sub="A clear view of inventory pressure and AI recommendations."/><div className="stat-grid"><Stat label="Active products" value={s?.active_products??'—'}/><Stat label="Units in stock" value={s?.stock_units??'—'}/><Stat label="At-risk products" value={s?.products_at_risk??'—'} tone="red"/><Stat label="Approved discounts" value={s?.approved_discounts??'—'} tone="lime"/></div>
+<div
+  className="content-grid"
+  style={{ gridTemplateColumns: '2.3fr 0.7fr' }}
+>
+  <section className="card"><div className="card-head"><div><div className="section-kicker">AI PIPELINE</div><h2>Priority recommendations</h2></div><NavLink className="text-link" to="/manager">Open queue →</NavLink></div>{recs.filter(r=>r.risk_score>=.35).slice(0,5).map(r=><div className="mini-row" key={r.id}><div><b>{r.product_name}</b><span>{r.stock_quantity} units · {r.days_to_expiry} days to expiry</span></div><Risk level={r.risk_level}/><b>{r.recommended_min_discount}–{r.recommended_max_discount}%</b></div>)}{!recs.length&&<div className="empty">No recommendations yet.</div>}</section><section className="card insight" style={{height: 'fit-content'}}><div className="section-kicker">TODAY'S FOCUS</div><h2>Turn surplus into recovered revenue.</h2><p>Managers retain control: the AI proposes a safe range and the final discount is entered manually within that range.</p><NavLink className="btn primary" to="/manager">Review recommendations</NavLink></section></div></>}
+function Stat({label,value,tone=''}){return <div className="card stat"><span>{label}</span><strong className={tone}>{value}</strong></div>}function Risk({level}){return <span className={`risk ${level.toLowerCase()}`}>{level}</span>}
+function ManagerQueue({session}){const[rows,setRows]=useState([]),[msg,setMsg]=useState(''),[loading,setLoading]=useState(true);const load=()=>{setLoading(true);getRecommendations(session.store_id||'STORE-1').then(setRows).finally(()=>setLoading(false))};useEffect(load,[]);return <><PageHeader eyebrow="MANAGER CONTROLS" title="Approval queue" sub="AI suggestions are guardrails. You choose the exact discount."/><div className="queue-note"><span>AI recommendation</span><b>Enter any value inside the suggested range.</b><small>Example: 15–20% accepts 15.0, 16.5, 18.25, 20.0, etc.</small></div>{msg&&<div className={`alert ${msg.startsWith('Error')?'error':'success'}`}>{msg}</div>}{loading?<div className="card empty">Loading recommendations…</div>:rows.filter(r=>r.risk_score>=.35).map(r=><ManagerCard key={r.id} r={r} onDone={m=>{setMsg(m);load()}}/>)}{!loading&&!rows.some(r=>r.risk_score>=.35)&&<div className="card empty">No products currently require manager action.</div>}</>}
+function ManagerCard({r,onDone}){const[min,max]=[Number(r.recommended_min_discount),Number(r.recommended_max_discount)],[value,setValue]=useState(String(r.recommended_discount_pct)),[busy,setBusy]=useState(false),valid=Number(value)>=min&&Number(value)<=max,price=Number(r.mrp)*(1-(Number(value)||0)/100);const submit=async()=>{if(!valid)return;setBusy(true);try{const x=await applyDiscount(r.id,Number(value),'Store Manager');onDone(`${r.product_name}: ${value}% applied. New billing price ${money(x.new_price)}. Excel synchronized.`)}catch(e){onDone('Error: '+(e.response?.data?.detail||e.message))}finally{setBusy(false)}};return <article className="manager-card"><div className="manager-top"><div><h2>{r.product_name}</h2><p>{r.sku} · {r.category||'General'} · {r.stock_quantity} units</p></div><Risk level={r.risk_level}/></div><div className="manager-metrics"><Metric label="MRP" value={money(r.mrp)}/><Metric label="Demand forecast" value={`${r.predicted_demand} units`}/><Metric label="Expiry" value={r.days_to_expiry===0?'Today':`${r.days_to_expiry} days`}/><Metric label="Current price" value={money(r.current_price)}/></div><div className="recommend-box"><div><span className="section-kicker">SUGGESTED RANGE</span><strong>{min}% – {max}%</strong></div><div className="discount-entry"><label>Discount %<input type="number" min={min} max={max} step="0.1" value={value} onChange={e=>setValue(e.target.value)} aria-label={`Discount for ${r.product_name}`}/></label><button className="btn primary" onClick={submit} disabled={!valid||busy}>{busy?'Applying…':'Apply discount'}</button></div></div><div className="price-preview"><span>New billing price</span><b>{money(price)}</b><small>{valid?`${value}% discount within approved range`:`Enter a value from ${min}% to ${max}%`}</small></div></article>}
+function Metric({label,value}){return <div><span>{label}</span><b>{value}</b></div>}
+function Inventory({session}){const[products,setProducts]=useState([]),[show,setShow]=useState(false),[form,setForm]=useState({sku:'',barcode:'',name:'',category:'Dairy',mrp:'',cost_price:'',stock_quantity:'',expiry_date:'',store_id:session.store_id||'STORE-1'});const load=async()=>{try{const data=await getProducts(session.store_id||'STORE-1');setProducts(data)}catch(e){console.error('Failed to load inventory:',e)}};useEffect(()=>{load()},[]);const add=async e=>{e.preventDefault();try{await createProduct({...form,mrp:Number(form.mrp),stock_quantity:Number(form.stock_quantity)});setShow(false);load()}catch(e){alert(e.response?.data?.detail||e.message)}};return <><PageHeader eyebrow="STORE OPERATIONS" title="Inventory" sub="Live stock, pricing and expiry exposure." action={<button className="btn primary" onClick={()=>setShow(!show)}>{show?'Close':'+ Add product'}</button>}/>{show&&<form className="card form-grid" onSubmit={add}>{['sku','barcode','name','category','mrp','cost_price','stock_quantity','expiry_date'].map(k=><label key={k}>{k.replace('_',' ')}<input required={['sku','name','mrp','stock_quantity'].includes(k)} value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})}/></label>)}<button className="btn primary">Save product</button></form>}<div className="card table-card"><table><thead><tr><th>Product</th><th>Category</th><th>Stock</th><th>Expiry</th><th>MRP</th><th>Live price</th><th/></tr></thead><tbody>{products.map(p=><tr key={p.id}><td><b>{p.name}</b><span className="table-sub">{p.sku}</span></td><td>{p.category}</td><td>{p.stock_quantity}</td><td>{p.expiry_date||'—'}</td><td>{money(p.mrp)}</td><td><b>{money(p.current_price)}</b></td><td><button className="icon-btn" onClick={()=>deleteProduct(p.id).then(load)}>Delete</button></td></tr>)}</tbody></table></div></>}
+function Billing({session}){const[barcode,setBarcode]=useState(''),[qty,setQty]=useState(1),[cart,setCart]=useState([]),[err,setErr]=useState('');const scan=async e=>{e.preventDefault();try{const x=await scanBarcode(barcode,Number(qty),session.store_id||'STORE-1');setCart(c=>[...c,x]);setBarcode('');setQty(1);setErr('')}catch(e){setErr(e.response?.data?.detail||e.message)}};const total=cart.reduce((a,x)=>a+x.line_total,0);return <><PageHeader eyebrow="POINT OF SALE" title="Billing" sub="Barcode scan reads the manager-approved price automatically."/><div className="content-grid"><section className="card"><div className="section-kicker">SCAN ITEM</div><h2>Store checkout</h2><form onSubmit={scan} className="scan-form"><label>Barcode<input autoFocus value={barcode} onChange={e=>setBarcode(e.target.value)} placeholder="890100000001"/></label><label>Quantity<input type="number" min="1" value={qty} onChange={e=>setQty(e.target.value)}/></label><button className="btn primary">Scan & add</button></form>{err&&<div className="alert error" style={{margin:'15px 0 0'}}> {err}</div>}<small className="muted">The POS never asks staff to calculate discounts.</small></section><section className="card"><div className="section-kicker">RECEIPT</div><h2>Current basket</h2>{cart.length? <>{cart.map((x,i)=><div className="receipt-row" key={i}><div><b>{x.product_name}</b><span>{x.quantity} × {money(x.unit_price)} · {x.discount_pct}% off</span></div><b>{money(x.line_total)}</b></div>)}<div className="receipt-total"><span>Total</span><b>{money(total)}</b></div></>:<div className="empty">Scan a product to begin.</div>}</section></div></>}
+function Stores(){const[stores,setStores]=useState([]),[show,setShow]=useState(false),[form,setForm]=useState({id:'',name:'',location:'',manager_name:''});const load=()=>getStores().then(setStores);useEffect(load,[]);const add=async e=>{e.preventDefault();try{await createStore(form);setForm({id:'',name:'',location:'',manager_name:''});setShow(false);load()}catch(e){alert(e.response?.data?.detail||e.message)}};return <><PageHeader eyebrow="NETWORK ADMINISTRATION" title="Store management" sub="Monitor the branch network and add new stores." action={<button className="btn primary" onClick={()=>setShow(!show)}>{show?'Close':'+ Add branch'}</button>}/>{show&&<form className="card form-grid" onSubmit={add}>{['id','name','location','manager_name'].map(k=><label key={k}>{k.replace('_',' ')}<input required value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})}/></label>)}<button className="btn primary">Create branch</button></form>}<div className="store-grid">{stores.map(s=><div className="card store-card" key={s.id}><div className="store-icon">⌂</div><div><h2>{s.name}</h2><p>{s.location}</p><span>{s.id} · {s.manager_name}</span></div><span className="active-badge">Active</span></div>)}</div></>}
+function Finance(){const[data,setData]=useState(null);useEffect(()=>{getFinance().then(setData)},[]);const vals=data?.stores||[],max=Math.max(1,...vals.map(x=>x.revenue));return <><PageHeader eyebrow="FINANCE & PERFORMANCE" title="Network performance" sub="Revenue, inventory and discount activity across all branches."/><div className="stat-grid"><Stat label="Total revenue" value={money(data?.totals.revenue)} tone="lime"/><Stat label="Estimated profit" value={money(data?.totals.estimated_profit)} tone="teal"/><Stat label="Stock units" value={data?.totals.stock_units??'—'}/><Stat label="Discount value" value={money(data?.totals.discount_value)}/><Stat label="Active branches" value={data?.totals.stores??'—'}/></div><div className="content-grid"><section className="card"><div className="section-kicker">REVENUE BY BRANCH</div><h2>Branch comparison</h2><div className="bar-chart">{vals.map(s=><div className="bar-row" key={s.store_id}><span>{s.store_name}</span><div className="bar-track"><div className="bar-fill" style={{width:`${Math.max(4,s.revenue/max*100)}%`}}/></div><b>{money(s.revenue)}</b></div>)}</div></section><section className="card"><div className="section-kicker">FINANCIAL DETAIL</div><h2>Branch health</h2><table><thead><tr><th>Branch</th><th>Revenue</th><th>Profit</th><th>Stock</th><th>Discount value</th></tr></thead><tbody>{vals.map(s=><tr key={s.store_id}><td><b>{s.store_name}</b><span className="table-sub">{s.location}</span></td><td>{money(s.revenue)}</td><td>{money(s.estimated_profit)}</td><td>{s.stock_units}</td><td>{money(s.discount_value)}</td></tr>)}</tbody></table></section></div></>}
+export default function App(){const[session,setSession]=useState(()=>{try{return JSON.parse(localStorage.getItem('pp_session'))}catch{return null}});const logout=()=>{localStorage.removeItem('pp_session');setSession(null)};if(!session)return <Login onLogin={s=>{localStorage.setItem('pp_session',JSON.stringify(s));setSession(s)}}/>;return <HashRouter><Layout session={session} onLogout={logout}/></HashRouter>}

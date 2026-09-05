@@ -1,0 +1,43 @@
+.brand-mark {
+  width: 70px;
+  height: 70px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sidebar-logo {
+  width: 70px;
+  height: 70px;
+  object-fit: contain;
+  display: block;
+}
+
+
+/* Dashboard two-column section */
+.content-grid {
+  display: grid;
+  grid-template-columns: 2fr 0.9fr;
+  gap: 18px;
+  align-items: stretch;
+}
+
+/* Today's Focus */
+.insight {
+  width: 100%;
+  box-sizing: border-box;
+}
